@@ -1,0 +1,153 @@
+---
+output: word_document
+---
+----
+title: "Titre"
+date: Fecha
+output:
+    pdf_document:
+        includes:
+            in_header: m yst yles.st y
+----
+
+Logistic regression is given by :
+
+
+$\Large p( y\mid   x) = \frac1{1 + e^{( y<  \theta   x>)}}$ 
+
+
+
+$\Large p( y=+1 \mid  x) = \frac1{1 + e^{<  \theta x>}}$
+
+
+$\ Large ( y=-1 \mid \ x) = 1 - \Large p( y=+1 \mid   x) = \frac{e^{<  \theta x>}}{1 + e^{<  \theta x>}}$
+
+
+
+where $<\theta, x>$ is the dot product of the transpose of the  vector of weight parameter and the feature vectore
+
+
+
+$\theta_{MLE} =\prod_{i=1}^{N} \Large p( y= y_i\mid \Large x={x_i,  \theta})=\sum_{i=1}^{N}\ln \Large p( y= y_i\mid \Large p={x_i,  \theta})$
+
+
+
+
+Now I want to introduce an indicator variable $\mathbb{I}( y=+1)$ , this indicated that output label( y) is +1 and $\mathbb{I}( y=-1)$  indicate that the output label( y) is  -1, using this knowledge
+
+
+
+$\mathcal{LL}(  \theta) = \sum_{i=1}^{N}{\mathbb{I}( y=+1)\ln \Large p( y= +1\mid  x={x_i,  \theta}) + \mathbb{I}( y=-1)\ln \Large p( y= -1\mid  x={x_i,  \theta})}$
+
+
+
+we can also write $\mathbb{I}( y=-1) = 1 - \mathbb{I}( y=+1)$
+
+
+
+$\mathcal{LL}(  \theta) = \sum_{i=1}^{N}{\mathbb{I}( y=+1)\ln \Large p( y= +1\mid {x_i,  \theta}) + (1-\mathbb{I}( y=+1))\ln \Large p( y= -1\mid {x_i,  \theta})}$
+
+
+
+substituting the value for logistic regression and simpl ying for a single datapoint we have,
+
+$\mathcal{LL}(  \theta) = \mathbb{I}( y_i=+1)\ln\frac1{1 + e^{<  \theta x_i>}} + (1-\mathbb{I}( y_i=+1))\ln\frac{e^{<  \theta x_i>}}{1 + e^{<  \theta x_i >}}$
+
+
+$=-\mathbb{I}( y_i=+1)\ln(1 + e^{<  \theta x_i>}) + (1-\mathbb{I}( y_i=+1))(<  \theta x_i> - \ln(1+e^{<  \theta x_i>}) )$
+
+
+
+$\mathcal{LL}(  \theta)=-\mathbb{I}( y_i=+1)\ln(1 + e^{<  \theta x_i>}) + < \theta x_i> - \ln(1+e^{<  \theta x_i>}) - \mathbb{I}( y_i=+1)<  \theta x_i> + \mathbb{I}( y_i=+1)\ln(1+e^{<  \theta x_i>})$
+
+
+
+
+$=   <\theta x_i> - \mathbb{I}( y_i=+1)<\theta x_i> - \ln(1+e^{<\theta x_i>})$
+
+
+
+$=  (1 - \mathbb{I}(y_i=+1))<\theta x_i>  - \ln(1+e^{<\theta x_i>})$
+
+
+$\frac{\partial \mathcal{LL}}{\partial   \theta_j} = (1 - \mathbb{I}( y_i=+1))\frac{\partial (<\theta x_i>)}{\partial   \theta_j} - \frac{\partial (\ln(1+e^{<\theta x_i>}))}{\partial   \theta_j}$
+
+
+
+$= (1 - \mathbb{I}( y_i=+1)) _j<x_i> - \frac{_j <x_i>e^{<\theta x_i>}}{(1+e^{<\theta x_i>})}$
+
+
+$= (1 -\mathbb{I}( y_i=+1))_j<x_i> -  _j<x_i> p( y= -1\mid {  x_i,\theta})$
+
+
+
+$= _j<x_i>(p( y= +1\mid {x_i, \theta}) -\mathbb{I}( y_i=+1))$
+
+
+
+The derivative/gradient for one data point is given as:
+
+
+$_j<x_i>(p( y= +1\mid {x_i, \theta}) -\mathbb{I}( y_i=+1))$
+
+
+ 
+adding the derivative for all the data point we have :
+
+$\frac{\partial \mathcal{LL}}{\partial   \theta_j} = \sum_{i=1}^{N}{  _j<x_i>(p( y= +1\mid {  x_i, \theta}) -\mathbb{I}( y_i=+1) )}$
+
+where $_j<x_i>$ is the feature vector associated with $j^{th}$ parameter .
+
+
+
+compute_loss_function =  function(predict_probality){
+  
+  ds = sum(log(1/predict_probality))
+  return(ds)
+}
+
+#Listing 6.1
+
+train_set = seq(5,95, by=5)
+
+loss.test.data = rep(0,19)
+loss.on.train.data = rep(0,19)
+train_loss_glm = rep(0,10)
+test_loss_glm = rep(0,10)
+initial_weight = rep(0,10)
+
+for (num in seq(1:19)){
+  for(i in seq(1:10)){
+    local_var = train_set[num]
+    local_var = local_var/100
+    set.seed(101)
+  random_perm = sample(n_row,n_row)
+  first_index = random_perm[1:floor(n_row*local_var)]
+  second_index = random_perm[(floor(n_row * local_var)+1):n_row]
+  train_data = breast_cancer_data[first_index,]
+  test_data = breast_cancer_data[second_index,]
+#train_target = label_array(train_data,"Class")
+model6 = glm(Class~Cl.thickness+Cell.size+Cell.shape+
+                Marg.adhesion+Epith.c.size+Bare.nuclei+
+                Bl.cromatin+Normal.nucleoli+
+                Mitoses,data=train_data,family=binomial(link="logit"))
+train_score = predict(model6, newdata=train_data, type = "response")
+
+train_loss_glm[i] = compute_loss_function(train_score)
+test_score = predict(model6, newdata=test_data, type="response")
+#test_target = label_array(test_data,"Class")
+test_loss_glm[i] = compute_loss_function(test_score)
+
+  }
+  
+  loss.on.train.data[num] = mean(train_loss_glm)
+  loss.test.data[num] = mean(test_loss_glm)
+}
+
+loss_function_result = data.frame(training_data=train_set,
+                                  loss_train_data=loss.on.train.data,
+                                  loss_test_data=loss.test.data)
+
+
+ggplot(loss_function_result,aes(x=training_data)) + geom_point(aes(y=loss_train_data,color="train_loss")) + geom_point(aes(y=loss_test_data,color="test_loss")) + geom_line(aes(y=loss_train_data,color="train_loss")) + geom_line(aes(y=loss_test_data,color="test_loss")) + ylab("loss")
+

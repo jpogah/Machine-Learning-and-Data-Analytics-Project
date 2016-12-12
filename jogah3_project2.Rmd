@@ -1,0 +1,549 @@
+---
+title: "project2"
+author: "Johnpaul Ogah"
+date: "November 5, 2016"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("ggplot2")
+library("plyr")
+library(tm)
+library(magrittr)
+library(wordcloud)
+library(chron)
+library(scales)
+library(GGally)
+library(reshape2)
+library(dplyr)
+library(stringr)
+library(timeDate)
+library(lubridate)
+library("cowplot")
+library("gridExtra")
+library("cowplot")
+library(glmnet)
+
+load("movies_merged")
+movie_only_data = subset(movies_merged, Type == "movie")
+movie_only_data = subset(movie_only_data, is.na(Budget)==FALSE)
+movie_only_data = subset(movie_only_data, is.na(Gross)==FALSE)
+movie_only_data$profit = movie_only_data$Gross - movie_only_data$Budget
+movie_only_data = subset(movie_only_data, Runtime != "N/A")
+movie_only_data=subset(movie_only_data, Metascore !="N/A")
+movie_only_data$Metascore = sapply(movie_only_data$Metascore, as.numeric)
+
+```
+
+
+```{r}
+convert.to.numeric = function(x){
+  str = strsplit(x , " ")[[1]]
+  len = length(str)
+  num = 0;
+  if (len == 4){
+    num = as.numeric(str[1]) * 60 + as.numeric(str[3])
+  }
+  if (len == 2){
+    if ( str[2] == "h"){
+      num = as.numeric(str[1]) * 60
+    }
+    if( str[2] == "min"){
+      num = as.numeric(str[1])
+    }
+  }
+  return(num)
+}
+
+extract.numbers = function(x){
+  num = str_extract_all(x,"\\(?[0-9]+\\)?")[[1]]
+  num= as.numeric(num)
+  num = (sum(num))
+  return(num)
+}
+
+ans = data.frame(ldply(movie_only_data[,'Runtime'], convert.to.numeric))
+movie_only_data$Runtime = ans$V1
+movie_only_data = na.omit(movie_only_data)
+movie_only_data = subset(movie_only_data, Year >= 2000)
+ans = ldply(movie_only_data[,"Awards"], extract.numbers)
+movie_only_data$Awards = ans$V1
+```
+##Use linear regression to predict profit based on all available numeric variables. Graph the train and test MSE as a function of the train set size (averaged over 10 random data partitions as described above)?
+
+
+```{r}
+
+calculate_rmse = function(x , y){
+  error = x - y
+  result = sum(error * error)
+  return(result/length(x))
+}
+
+train_set = seq(5,95, by=5)
+
+mse.on.test.data = rep(0,19)
+mse.on.train.data = rep(0,19)
+train_mse = rep(0,10)
+test_mse= rep(0,10)
+n_row = nrow(movie_only_data)
+best_mse = 1.797693e+308
+best_train_size = 0
+set.seed(50)
+
+
+
+for (num in seq(1:19)){
+  for(i in seq(1:10)){
+    local_var = train_set[num]
+    local_var = local_var/100
+  random_perm = sample(n_row,n_row)
+  first_index = random_perm[1:floor(n_row*local_var)]
+  second_index = random_perm[(floor(n_row * local_var)+1):n_row]
+  train_data = movie_only_data[first_index,]
+  test_data = movie_only_data[second_index,]
+  data = train_data
+  model = lm(profit~Year+Runtime+Budget+Awards+imdbVotes+tomatoReviews+tomatoRotten+tomatoUserMeter+tomatoUserReviews+tomatoUserRating+tomatoMeter+imdbRating+Metascore,data)
+ train_mse[i]  = mean(residuals(model)^2)
+ data = test_data
+ test_mse[i] = calculate_rmse(test_data$profit, predict(model,data))
+  }
+  mse.on.train.data[num] = mean(train_mse)
+  mse.on.test.data[num] = mean(test_mse)
+  
+  if (mean(test_mse) < best_mse){
+   best_mse = mean(test_mse)
+   best_model=model
+ }
+}
+
+result = data.frame(training_data=train_set,
+                    mse_train_data=mse.on.train.data,
+                    mse_test_data=mse.on.test.data)
+
+ggplot(result,aes(x=training_data)) + geom_line(aes(y=mse_train_data,color="train_mse")) + geom_line(aes(y=mse_test_data,color="test_mse")) +ylab("MSE") +xlab("% training data") + ggtitle("Fig 1.0 : MSE vs Training data size")
+
+cat("best MSE:", best_mse)
+
+```
+
+
+###Try to improve the prediction quality in (1) as much as possible by adding feature transformations of the numeric variables. Explore both numeric transformations such as power transforms and non-numeric transformations of the numeric variables like binning (e.g.,is_budget_greater_than_3M). Explain which transformations you used and why you chose them.Graph the train and test MSE as a function of the train set size (averaged over 10 random datapartitions as described above)?
+
+
+```{r}
+features = c("tomatoUserMeter","Awards","Metascore","Runtime","tomatoRotten","tomatoReviews","imdbVotes","tomatoUserReviews","Year","Budget","tomatoUserRating","imdbRating","tomatoMeter")
+n_row = nrow(movie_only_data)
+
+
+for(x in features){
+  initial_feature= x
+  myfeature = setdiff(features, x)
+  mse_feature = rep(0, length(features))
+  set.seed(80)
+  train_mse = rep(0,10)
+ test_mse= rep(0,10)
+ best_mse = 1.797693e+308
+
+
+myformular = as.formula(paste("profit","~",initial_feature,"^2"))
+
+
+for(num in seq(1:length(myfeature))){
+for(i in seq(1:10)){
+  random_perm = sample(n_row,n_row)
+  first_index = random_perm[1:floor(n_row*0.7)]
+  second_index = random_perm[(floor(n_row * 0.7)+1):n_row]
+  train_data = movie_only_data[first_index,]
+  test_data = movie_only_data[second_index,]
+  data2 = train_data
+
+ # model2 = lm(profit~data2[,initial_feature],data2)
+  model2 = lm(formula = myformular, data2)
+ train_mse[i]  = mean(residuals(model)^2)
+ data2 = test_data
+ prediction = predict(model2,data2)
+ if( length(prediction) != length(test_data$profit)){
+   print("length not equal")
+ }
+ test_mse[i] = calculate_rmse(test_data$profit,prediction )
+}
+  mse_feature[num] = mean(test_mse)
+  
+  if (mean(test_mse) < best_mse){
+     initial_feature = paste(initial_feature, myfeature[num],sep = "+")
+     myformular = as.formula(paste("profit","~","(",initial_feature,")^2"))
+     best_mse = mean(test_mse)
+  }
+}
+
+print(best_mse)
+print(initial_feature)
+
+}
+
+
+#Initial feature selection based on MSE from above code
+
+selected_feature = c("tomatoMeter","Budget","Runtime","Year","imdbVotes","tomatoReviews","tomatoUserMeter","imdbRating")
+
+
+
+train_set = seq(5,95, by=5)
+
+mse.on.test.data = rep(0,19)
+mse.on.train.data = rep(0,19)
+train_mse = rep(0,10)
+test_mse= rep(0,10)
+n_row = nrow(movie_only_data)
+best_mse = 1.797693e+308
+best_train_size = 0
+train_test_split=0
+set.seed(100)
+
+
+
+for (num in seq(1:19)){
+  for(i in seq(1:10)){
+    local_var = train_set[num]
+    local_var = local_var/100
+  random_perm = sample(n_row,n_row)
+  first_index = random_perm[1:floor(n_row*local_var)]
+  second_index = random_perm[(floor(n_row * local_var)+1):n_row]
+  train_data = movie_only_data[first_index,]
+  test_data = movie_only_data[second_index,]
+  data = train_data
+  model = lm(profit~(tomatoMeter+Budget+Runtime+Year+imdbVotes+tomatoReviews+tomatoUserMeter+imdbRating)^2,data)
+ train_mse[i]  = mean(residuals(model)^2)
+ data = test_data
+ test_mse[i] = calculate_rmse(test_data$profit, predict(model,data))
+  }
+  mse.on.train.data[num] = mean(train_mse)
+  mse.on.test.data[num] = mean(test_mse)
+  if(mean(test_mse) < best_mse){
+    best_mse = mean(test_mse)
+    train_test_split= train_set[num]
+  }
+  
+}
+
+cat("best MSE:", best_mse)
+cat("train_test:",train_test_split)
+
+result = data.frame(training_data=train_set,
+                    mse_train_data=mse.on.train.data,
+                    mse_test_data=mse.on.test.data)
+
+ggplot(result,aes(x=training_data)) + geom_line(aes(y=mse_train_data,color="train_mse")) + geom_line(aes(y=mse_test_data,color="test_mse")) +ylab("MSE") +xlab("% training data") + ggtitle("Fig 2.0 : MSE vs Training data size")
+
+
+```
+
+```{r}
+movie_only_data = subset(movie_only_data, Genre != "N/A")
+docs = data.frame(movie_only_data$Genre)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+docs = tm_map(docs, content_transformer(tolower))
+docs = tm_map(docs, removePunctuation)
+docs = tm_map(docs, removeNumbers)
+docs = tm_map(docs, stripWhitespace)
+dtm = DocumentTermMatrix(docs)
+dtm = removeSparseTerms(dtm,0.925)
+newcolumns_1 = data.frame(as.matrix(dtm))
+movie_only_data = cbind(movie_only_data,newcolumns_1)
+genre_features = names(newcolumns_1)
+
+temp =  data.frame(gsub(pattern = " ", replacement = "", x = movie_only_data$Actors))
+names(temp) = "Actors"
+temp$Actors = as.character(temp$Actors)
+
+docs = data.frame(temp$Actors)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+docs = tm_map(docs, content_transformer(tolower))
+toSpace = content_transformer(function(x,pattern) gsub(pattern," ",x))
+docs = tm_map(docs,toSpace, ",")
+docs=tm_map(docs,removePunctuation)
+dtm = DocumentTermMatrix(docs)
+#newcolumns_2 = data.frame(as.matrix(dtm))
+#movie_only_data = cbind(movie_only_data,newcolumns_2)
+#actors_features = names(newcolumns_2)
+
+mydata = movie_only_data
+
+temp =  data.frame(gsub(pattern = " ", replacement = "", x = movie_only_data$Director))
+names(temp) = "Director"
+temp$Director = as.character(temp$Director)
+
+docs = data.frame(temp$Director)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+docs = tm_map(docs, content_transformer(tolower))
+toSpace = content_transformer(function(x,pattern) gsub(pattern," ",x))
+docs = tm_map(docs,toSpace, ",")
+dtm = DocumentTermMatrix(docs)
+newcolumns_3 = data.frame(as.matrix(dtm))
+mydata = cbind(mydata,newcolumns_3)
+director_features = names(newcolumns_3)
+
+
+
+docs = data.frame(movie_only_data$tomatoImage)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+docs = tm_map(docs, content_transformer(tolower))
+toSpace = content_transformer(function(x,pattern) gsub(pattern," ",x))
+docs = tm_map(docs,toSpace, ",")
+dtm = DocumentTermMatrix(docs)
+newcolumns_4 = data.frame(as.matrix(dtm))
+movie_only_data = cbind(movie_only_data,newcolumns_4)
+tomato_image_features = names(newcolumns_4)
+
+temp =  data.frame(gsub(pattern = " ", replacement = "", x = movie_only_data$Production))
+names(temp) = "Production"
+temp$Production = sapply(temp$Production, function(x){return(substr(x,1,9))})
+
+docs = data.frame(temp$Production)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+toSpace = content_transformer(function(x,pattern) gsub(pattern," ",x))
+docs = tm_map(docs,toSpace, ",")
+docs = tm_map(docs,toSpace, "/")
+docs = tm_map(docs, removePunctuation)
+docs = tm_map(docs, content_transformer(tolower))
+toString = content_transformer(function(x, from ,to) gsub(from , to , x))
+docs = tm_map(docs , toString, "sonypicut","sonypictu")
+
+dtm = DocumentTermMatrix(docs)
+dtm=removeSparseTerms(dtm,0.95)
+newcolumns_5 = data.frame(as.matrix(dtm))
+movie_only_data = cbind(movie_only_data,newcolumns_5)
+production_features = names(newcolumns_5)
+
+
+
+
+docs = data.frame(movie_only_data$Language)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+docs = tm_map(docs, content_transformer(tolower))
+toSpace = content_transformer(function(x,pattern) gsub(pattern," ",x))
+docs = tm_map(docs,toSpace, ",")
+dtm = DocumentTermMatrix(docs)
+dtm = removeSparseTerms(dtm, 0.92)
+newcolumns_6 = data.frame(as.matrix(dtm))
+movie_only_data = cbind(movie_only_data,newcolumns_6)
+language_features = names(newcolumns_6)
+
+
+
+mydocs = data.frame(movie_only_data$Country)
+ds = DataframeSource(mydocs)
+rm(mydocs)
+mydocs = VCorpus(ds)
+mydocs = tm_map(mydocs, content_transformer(tolower))
+#toSpace = content_transformer(function(x,pattern) gsub(pattern," ",x))
+#docs = tm_map(docs,toSpace, ",")
+toString = content_transformer(function(x, from ,to) gsub(from , to , x))
+mydocs = tm_map(mydocs , toString, "new zealand", "new-zealand")
+mydocs = tm_map(mydocs , toString, "burkina faso", "burkina-faso")
+mydocs = tm_map(mydocs , toString, "united arab emirates", "united-arab-emirates")
+mydocs = tm_map(mydocs , toString, "puerto rico", "puerto-rico")
+mydocs = tm_map(mydocs , toString, "costa rica", "costa-rica")
+mydocs = tm_map(mydocs , toString, "côte d'ivoire", "côte-d'ivoire")
+mydocs = tm_map(mydocs , toString, "dominican republic", "dominican-republic")
+mydocs = tm_map(mydocs , toString, "solomon islands", "solomon-islands")
+mydocs = tm_map(mydocs , toString, "bosnia and herzegovina", "bosnia-and-herzegovina")
+mydocs = tm_map(mydocs , toString, "soviet union", "soviet-union")
+mydocs = tm_map(mydocs , toString, "east germany", "east-germany")
+mydocs = tm_map(mydocs , toString, "federal republic of yugoslavia", "yugoslavia")
+mydocs = tm_map(mydocs , toString, "hong kong", "hong-kong")
+mydocs = tm_map(mydocs , toString, "west germany", "west-germany")
+mydocs = tm_map(mydocs , toString, "the democratic republic of congo", "congo")
+mydocs = tm_map(mydocs , toString, "isle of man", "isle-of-man")
+mydocs = tm_map(mydocs , toString, "uk,", " united-Kingdom")
+mydocs = tm_map(mydocs , toString, "trinidad and tobago", "trinidad-and-tobago")
+mydocs = tm_map(mydocs , toString, "turks and caicos islands", "turks-and-caicos-islands")
+mydocs = tm_map(mydocs , toString, "serbia and montenegro", "serbia-and-montenegro")
+mydocs = tm_map(mydocs , toString, "south africa", "south-africa")
+mydocs = tm_map(mydocs , toString, "saudi arabia", "saudi-arabia")
+mydocs = tm_map(mydocs , toString, "north korea", "north-korea")
+mydocs = tm_map(mydocs , toString, "papua new guinea", "papua-new-guinea")
+mydocs = tm_map(mydocs , toString, "czech republic", "czech-republic")
+mydocs = tm_map(mydocs , toString, "republic of macedonia", "republic-of-macedonia")
+mydocs = tm_map(mydocs, removePunctuation)
+dtm = DocumentTermMatrix(mydocs)
+dtm = removeSparseTerms(dtm, 0.90)
+newcolumns_7 = data.frame(as.matrix(dtm))
+movie_only_data = cbind(movie_only_data,newcolumns_7)
+country_features = names(newcolumns_7)
+
+
+
+
+temp =  data.frame(gsub(pattern = " ", replacement = "", x = movie_only_data$Rated))
+names(temp) = "Rated"
+temp$Rated = sapply(temp$Rated,function(x){if(x=="R"){return("R-rated")}else if (x=="G"){return("G-Rated")} else return(as.character(x))})
+
+docs = data.frame(temp$Rated)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+docs = tm_map(docs, content_transformer(tolower))
+toSpace = content_transformer(function(x,pattern) gsub(pattern," ",x))
+docs = tm_map(docs,toSpace, ",")
+dtm = DocumentTermMatrix(docs)
+dtm = removeSparseTerms(dtm, 0.92)
+newcolumns_8 = data.frame(as.matrix(dtm))
+movie_only_data = cbind(movie_only_data,newcolumns_8)
+Rated_features = names(newcolumns_8)
+
+```
+###Use linear regression to predict profit based on all available non-numeric variables (using thetransformations in (3). Graph the train and test MSE as a function of the train set size (averagedover 10 random data partitions as described above)?
+```{r}
+rm(features)
+features = c(genre_features,tomato_image_features,production_features,language_features,country_features,Rated_features)
+
+mydata = movie_only_data[,c("profit",features)]
+
+train_set = seq(5,95, by=5)
+
+mse.on.test.data = rep(0,19)
+mse.on.train.data = rep(0,19)
+train_mse = rep(0,10)
+test_mse= rep(0,10)
+n_row = nrow(movie_only_data)
+best_mse = 1.797693e+308
+best_train_size = 0
+
+
+
+for (num in seq(1:19)){
+  for(i in seq(1:10)){
+    local_var = train_set[num]
+    local_var = local_var/100
+  random_perm = sample(n_row,n_row)
+  first_index = random_perm[1:floor(n_row*local_var)]
+  second_index = random_perm[(floor(n_row * local_var)+1):n_row]
+  train_data = mydata[first_index,]
+  test_data =  mydata[second_index,]
+  data = train_data
+  model = lm(profit~.,data)
+ train_mse[i]  = mean(residuals(model)^2)
+ data = test_data
+ test_mse[i] = calculate_rmse(test_data$profit, predict(model,data))
+  }
+  mse.on.train.data[num] = mean(train_mse)
+  mse.on.test.data[num] = mean(test_mse)
+  
+}
+
+result = data.frame(training_data=train_set,
+                    mse_train_data=mse.on.train.data,
+                    mse_test_data=mse.on.test.data)
+
+ggplot(result,aes(x=training_data)) + geom_line(aes(y=mse_train_data,color="train_mse")) + geom_line(aes(y=mse_test_data,color="test_mse")) +ylab("MSE") +xlab("% training data") + ggtitle("Fig 2.0 : MSE vs Training data size")
+
+```
+
+
+###Try to improve the prediction quality in (1) as much as possible by using both numeric and nonnumericvariables as well as creating additional transformed features including interactionfeatures (for example is_genre_comedy x is_budget_greater_than_3M). Explain whichtransformations you used and why you chose them. Graph the train and test MSE as a functionof the train set size (averaged over 10 random data partitions as described above)?
+```{r}
+features = c(features,selected_feature)
+
+mse_feature = rep(0, length(features))
+initial_feature = "Budget"
+set.seed(80)
+train_mse = rep(0,10)
+test_mse= rep(0,10)
+best_mse = 1.797693e+308
+
+myformular = as.formula(paste("profit","~",initial_feature))
+
+
+for(num in seq(1:length(features))){
+for(i in seq(1:10)){
+  random_perm = sample(n_row,n_row)
+  first_index = random_perm[1:floor(n_row*0.7)]
+  second_index = random_perm[(floor(n_row * 0.7)+1):n_row]
+  train_data = movie_only_data[first_index,]
+  test_data = movie_only_data[second_index,]
+  data2 = train_data
+
+ # model2 = lm(profit~data2[,initial_feature],data2)
+  model2 = lm(formula = myformular, data2)
+ train_mse[i]  = mean(residuals(model)^2)
+ data2 = test_data
+ prediction = predict(model2,data2)
+ if( length(prediction) != length(test_data$profit)){
+   print("length not equal")
+ }
+ test_mse[i] = calculate_rmse(test_data$profit,prediction )
+}
+  mse_feature[num] = mean(test_mse)
+  
+  if (mean(test_mse) < best_mse){
+     initial_feature = paste(initial_feature, features[num],sep = "+")
+     myformular = as.formula(paste("profit","~",initial_feature))
+     best_mse = mean(test_mse)
+  }
+}
+
+print(best_mse)
+print(initial_feature)
+
+mydata = movie_only_data[,c("profit",features)]
+
+train_set = seq(5,95, by=5)
+
+mse.on.test.data = rep(0,19)
+mse.on.train.data = rep(0,19)
+train_mse = rep(0,10)
+test_mse= rep(0,10)
+n_row = nrow(movie_only_data)
+best_mse = 1.797693e+308
+best_train_size = 0
+set.seed(51)
+
+
+
+for (num in seq(1:19)){
+  for(i in seq(1:10)){
+    local_var = train_set[num]
+    local_var = local_var/100
+  random_perm = sample(n_row,n_row)
+  first_index = random_perm[1:floor(n_row*local_var)]
+  second_index = random_perm[(floor(n_row * local_var)+1):n_row]
+  train_data = mydata[first_index,]
+  test_data =  mydata[second_index,]
+  data = train_data
+  model = lm(profit~(tomatoMeter+Budget+Runtime+imdbVotes+tomatoReviews+tomatoUserMeter+imdbRating+action+comedy+adventure+rotten+pg.13+r.rated)^2,data)
+ train_mse[i]  = mean(residuals(model)^2)
+ data = test_data
+ test_mse[i] = calculate_rmse(test_data$profit, predict(model,data))
+  }
+  mse.on.train.data[num] = mean(train_mse)
+  mse.on.test.data[num] = mean(test_mse)
+  if(mean(test_mse) < best_mse){
+    best_mse = mean(test_mse)
+  }
+  
+}
+print(best_mse)
+
+result = data.frame(training_data=train_set,
+                    mse_train_data=mse.on.train.data,
+                    mse_test_data=mse.on.test.data)
+
+ggplot(result,aes(x=training_data)) + geom_line(aes(y=mse_train_data,color="train_mse")) + geom_line(aes(y=mse_test_data,color="test_mse")) +ylab("MSE") +xlab("% training data") + ggtitle("Fig 2.0 : MSE vs Training data size")
+
+

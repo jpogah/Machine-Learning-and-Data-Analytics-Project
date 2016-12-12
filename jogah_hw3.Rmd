@@ -1,0 +1,498 @@
+---
+output: word_document
+---
+
+# prerequisites
+
+```{r}
+library("ggplot2")
+library("plyr")
+library(tm)
+library(magrittr)
+library(wordcloud)
+library(chron)
+library(scales)
+library(GGally)
+library(reshape2)
+library(dplyr)
+library(stringr)
+library(timeDate)
+library(lubridate)
+library("cowplot")
+library("gridExtra")
+library("cowplot")
+
+
+load("movies_merged")
+```
+1.How many rows did you remove?
+
+The variable Type captures whether the row is a movie, a TV series, or a game. Remove all rows that do not correspond to movies. How many rows did you remove?
+
+```{r}
+
+
+row = dim(movies_merged)[1]
+
+
+# create a subset of the data set with movie type only
+row = dim(movies_merged)[1]
+movie_only_data = subset(movies_merged, Type == "movie")
+new_row = dim(movie_only_data)[1]
+row_removed = row - new_row
+cat("number of rows removed: ", row_removed)
+```
+As seen from the output from the code above , the total number of rows removed is 789.
+
+
+2.Investigate and describe the distribution of the Runtime variable and comment on how it changes over years (variable Year) and how it changes in relation to the budget (variable Budget).
+
+The variable Runtime represents the length of the title as a string. Write R code to convert it to a numeric value (in minutes) and replace Runtime with the new numeric column. Investigate and describe the distribution of that value and comment on how it changes over years (variable Year) and how it changes in relation to the budget (variable Budget).
+```{r}
+# Listing 2.0:
+# remove rows with Runtime value equals N/A
+new_data = subset(movie_only_data, Runtime != "N/A")
+
+# create a function that takes a string, split it based
+# on whitespace character, take the first string and then 
+#return the value as numeric
+convert.to.numeric = function(x){
+  str = strsplit(x , " ")[[1]]
+  len = length(str)
+  num = 0;
+  if (len == 4){
+    num = as.numeric(str[1]) * 60 + as.numeric(str[3])
+  }
+  if (len == 2){
+    if ( str[2] == "h"){
+      num = as.numeric(str[1]) * 60
+    }
+    if( str[2] == "min"){
+      num = as.numeric(str[1])
+    }
+  }
+  return(num)
+}
+
+
+ans = data.frame(ldply(new_data[,'Runtime'], convert.to.numeric))
+new_data$Runtime = ans$V1
+
+index1 = sample(nrow(new_data), 1000)
+sample.number = 1:1000
+new_data[index1,] %>%
+  ggplot(aes(sample.number,Runtime)) + geom_point() + ggtitle("Fig 2.0: Runtime of movies")
+
+random_index = sample(nrow(new_data), 1000)
+new_data[random_index,]  %>%
+ggplot(aes(Year,Runtime)) + geom_point() + ggtitle("Fig 2.1: Runtime vs Year")
+
+
+new_data2 = subset(new_data, is.na(Budget) == FALSE)
+random_index2 = sample(nrow(new_data2),2000)
+
+new_data2[random_index2,]   %>%
+ggplot(aes(log(Budget),Runtime)) + geom_point() + ggtitle("Fig 2.2: Runtime vs Budget")
+
+```
+As seen from the fig 2.0, we see that movies have two typical runtime of 0-25min and 75-125min with majority of the movies having a runtime between 75-100minute.
+As seen from the second fig 2.1 above, two typical runtime  of 0-25 min and 75-125 minute exist accross various years which is consistent with our previuos result.Again majority of movies have a runtime between 75 and 100 minute, this is also consistenr with our previuos result.
+from the fig 2.2 above, majority of movies with a budget  have a runtime of between 75-125 minute. This is also consistent with prevoius result.
+
+
+
+3.The column Genre represents a list of genres associated with the movie in a string format. Write code to parse each text string into a binary vector with 1s representing the presence of a genre and 0s the absence and add it to the dataframe as additional columns. For example, if there are a total of 3 genres: Drama, Comedy, and Action a movie that is both Action and Comedy should be represented by a binary vector (0, 1, 1). Note that you need to first compile a dictionary of all possible genres and then figure out which movie has which genres (you can use the R tm package to create the dictionary). Graph and describe the relative proportions of titles having the top 10 genres and examine how the distribution of gross revenue (variable Gross) changes across genres
+```{r}
+
+new_data3 = subset(movie_only_data, Genre != "N/A")
+docs = data.frame(new_data3$Genre)
+ds = DataframeSource(docs)
+rm(docs)
+docs = VCorpus(ds)
+
+# view the first three document in the corpus
+lapply(docs[1:3], as.character)
+
+#convert all words to lower case
+docs = tm_map(docs, content_transformer(tolower))
+
+# remove punctuation
+
+docs = tm_map(docs, removePunctuation)
+
+# remove number if any
+docs = tm_map(docs, removeNumbers)
+
+# strip white space
+docs = tm_map(docs, stripWhitespace)
+
+# view the first three document in the corpus
+lapply(docs[1:3], as.character)
+
+
+# create a term matrix 
+#A document term matrix is simply a matrix with documents as the rows and terms as the columns and a count of the frequency of words as the cells of the matrix
+
+dtm = DocumentTermMatrix(docs)
+
+newcolumns = as.matrix(dtm)
+new_data4 = cbind(new_data3,newcolumns)
+
+
+# By ordering frequency we can least the most frequent and least frequent term
+
+countfreq = colSums(as.matrix(dtm))
+
+orderfreq = order(countfreq)
+
+#most frequent item
+top.10.genre = countfreq[tail(orderfreq,10)]
+print(top.10.genre)
+list_genre = names(top.10.genre)
+
+temp_data = subset(new_data4, select=c("Title",list_genre))
+temp_data = melt(temp_data, id=1)
+temp_data = subset(temp_data , value != 0)
+names(temp_data ) = c("Title" ,"Genre" ,"value" )
+
+temp_data %>%
+  filter(Genre %in% names(top.10.genre)) %>%
+  group_by(Genre) %>%
+  ggplot(aes(x=Genre)) + geom_bar(aes(y=(..count..)/sum(..count..))) + scale_y_continuous(labels=percent) + ggtitle("Fig 3.0: distribution of movie title with the top 10 movie genre") + theme(axis.text.x=element_text(angle=45,hjust = 1))
+ 
+
+
+temp_data = subset(new_data4, select=c("Title","Gross",list_genre))
+temp_data = subset(temp_data, is.na(Gross) == FALSE)
+temp_data = melt(temp_data, id=c(1,2))
+temp_data = subset(temp_data , value != 0)
+names(temp_data ) = c("Title","Gross" ,"Genre" ,"value" )
+
+ggplot(temp_data ,aes(reorder(Genre, -Gross, median), Gross)) + geom_boxplot() + coord_flip() + scale_x_discrete("Genre") + ggtitle("Fig 3.1 : Genre vs Gross")
+
+```
+As seen from fig 3.0 above, the top 10 genre are(in this order) :1)drama 2)comedy 3)short 4) romance 5)action 6)crime 7)thriller 8)documentary 9) adventure 10)animation .Further the histogram plot shows the proportion of title with the top 10 genre , we see 27% of the titles have drama as Genre and ~4.5% of titles have animation as Genre.we can see the percentage of the other top 10 genre as well from the graph.
+As seen from the fig 3.1 above, the Genre with highest gross revenue is animation and lowest gross revenue is documentary.
+
+4.Find and remove all rows where you suspect a merge error occurred based on a mismatch between these two variables.What is your precise removal logic and how many rows did you end up removing?
+The dataframe was put together by merging two different sources of data and it is possible that the merging process was inaccurate in some cases (the merge was done based on movie title, but there are cases of different movies with the same title). The first source's release time was represented by the column Year (numeric representation of the year) and the second by the column Release (string representation of release date). Find and remove all rows where you suspect a merge error occurred based on a mismatch between these two variables. To make sure subsequent analysis and modeling work well, avoid removing more than 10% of the rows that have a present Gross variable. What is your precise removal logic and how many rows did you end up removing?
+
+
+```{r}
+
+original_data = movie_only_data
+
+
+# check no rows with Year missing
+nrow_year_with_NA = sum(is.na(original_data$Year))
+nrow_released_with_NA = sum((is.na(original_data$Released)==TRUE))
+nrow_year_with_NA
+nrow_released_with_NA
+# since Released has missing values and Year has none
+# we removed all all rows in the data with missing #Released value
+filtered_original_data1 = subset(original_data, is.na(Released)== TRUE)
+data2 = subset(filtered_original_data1, is.na(Gross)==FALSE)
+filtered_original_data2 = subset(original_data, is.na(Released) == FALSE)
+rows_removed1 = nrow(original_data) - nrow(filtered_original_data2)
+data3 = subset(filtered_original_data2, Year != month.day.year(unclass(as.Date(Released)))$year)
+data4 = subset(data3, is.na(Gross) ==FALSE)
+temp_data = subset(filtered_original_data2,Year == month.day.year(unclass(as.Date(Released)))$year )
+filtered_data2 = rbind(temp_data,data4)
+
+total.no.row.removed = nrow(original_data) - nrow(filtered_data2)
+
+cat("total rows removed:",total.no.row.removed)
+
+```
+using is.na function on "Year" column reveals that no data is missing in this column. Applying the same function on "Released" column reveals there are 4949 rows with missing released column. Out of the 4949 rows only about 45 rows has non missing Gross column data and this is a lot less than 10% of the total available Gross data in the dataset.Therefore we can remove all 4949 rows. Next we compare the Year and Released column, if the "Year" is not equal to the extracted year from the "Released" column then there is a mismatch.An additional 5727 mismatch were found, of these value 770 rows has non missing Gross value, so I will retain rows that contains data for the Gross varaiable.Therefore total number of rows removed = 4949 + 5727 - 770 = 9906
+
+
+
+
+5.An important question is when to release a movie. Investigate the relationship between release date and gross revenue and comment on what times of year are most high revenue movies released in. Does your answer changes for different genres? Based on the data, can you formulate a genre-based recommendation for release date that is likely to increase the title's revenue? If you have a recommendation motivate it with the appropriate disclaimers, or otherwise explain why you are unable to produce a recommendation.
+```{r}
+# new_data4 is the name of the final data set generated in question 3
+
+#remove rows with missing values in the Released column
+data_no_na_for_Released = subset(new_data4 , is.na(Released) == FALSE)
+
+
+# remove NA occuring in Gross variable
+data_no_na_for_Released = subset(data_no_na_for_Released, is.na(Gross) == FALSE)
+
+data_no_na_for_Released$ReleasedYear = year(data_no_na_for_Released$Released)
+
+hlist =holidayNYSE(1888:2018)
+hlist = c(hlist,holidayLONDON(1888:2018))
+hlist = c(hlist, holidayTSX(1888:2018))
+hlist = c(hlist, holidayZURICH(1888:2018))
+#myholidays  <- dates(as.character(holiday(1890:2018,hlist)),format="Y-M-D")
+temp1 = data.frame(isHoliday(timeDate(data_no_na_for_Released$Released), holidays =hlist ))
+names(temp1) = "v1"
+data_no_na_for_Released$Holidays[temp1$v1 == TRUE] = "Yes"
+data_no_na_for_Released$Holidays[temp1$v1 == FALSE] = "No"
+temp2 = data.frame(is.weekend(data_no_na_for_Released$Released))
+names(temp2) = "v1"
+data_no_na_for_Released$Weekend[temp2$v1 == TRUE] = "Yes"
+data_no_na_for_Released$Weekend[temp2$v1 == FALSE] = "No"
+data_no_na_for_Released$ReleasedWeek = week(data_no_na_for_Released$Released)
+
+
+ data_no_na_for_Released %>%
+  mutate(Gross_Billion=Gross/1000000000) %>%
+ filter (ReleasedYear %in% 1992:2018) %>%
+  ggplot(aes(x=ReleasedWeek, y=Gross_Billion,fill=Holidays))  +        geom_bar(stat="identity") + ggtitle("Fig 5.1 : Gross Revenue vs ReleasedWeek" )
+
+
+ 
+
+genrelist = names(top.10.genre)
+
+# Extract the Title, Gross and 25 genre columns from data obtained in question 3
+
+temp_data = data_no_na_for_Released[,c("Title","Gross","Holidays","ReleasedWeek",genrelist)]
+temp_data_tall = melt(temp_data, id=c(1,2,3,4))
+
+# drop all rows where value == 0 
+temp_data_tall = subset(temp_data_tall, value != 0)
+names(temp_data_tall) = c("Title","Gross", "Holidays","ReleasedWeek", "Genre", "value")
+temp_data_tall$Genre = as.factor(temp_data_tall$Genre)
+
+
+temp_data_tall %>%
+  mutate(Gross_Billion=Gross/1000000000) %>%
+  filter(Genre %in% genrelist) %>%
+  group_by(Genre) %>%
+  ggplot(aes(x=ReleasedWeek, y=Gross_Billion, fill=Holidays)) + geom_bar(stat="identity") + facet_wrap(~Genre) + ggtitle("Fig 5.2  Released Gross  revenue vs ReleasedWeek") +  theme(axis.text.x=element_text(angle=45,hjust = 1))
+
+```
+As seen from fig 5.1, high revenue movie are released in the 51st week. That is movies release few days before the christmas holidays are more likely to generate higher revenue than other release date.
+
+As seen from fig 5.2 , the gross revenue distribution for different weeks changes with different genre.The genre adventure has the highest gross revenue and the genre short has the lowest gross revenue.
+
+Also as seen from fig 5.2 , the genre combination of adventure, action and drama for release date of 51st week or a few days before christmas will likely result in increase  gross revenue.
+
+
+Disclaimer:This recommendation was based on the data used for analysis and may be inaccurate and as a result may not give the expected outcome.
+
+
+
+6.	There are several variables that describe ratings including IMDb ratings (imdbRating represents average user ratings and imdbVotes represents the number of user ratings) and multiple Rotten Tomatoes ratings (represented by several variables pre-fixed by tomato). Read up on such ratings on the web (for example rottentomatoes.com/about and http:// www.imdb.com/help/show_leaf?votestopfaq) and investigate the pairwise relationships between these different descriptors using graphs. Comment on similarities and differences between the user ratings of IMDb and the critics ratings of Rotten Tomatoes. Comment on the relationships between these variables and the gross revenue. Which of these ratings are the most highly correlated with gross revenue (use the R function cor and remove rows with missing values)?
+
+```{r}
+
+onlyRatingData = movies_merged[, c("imdbVotes","imdbRating","tomatoRating","tomatoReviews","tomatoUserRating","tomatoUserReviews","tomatoMeter","tomatoRotten","tomatoUserMeter","tomatoFresh")]
+onlyRatingDataNoNA = na.omit(onlyRatingData)
+
+  index = sample(nrow(onlyRatingDataNoNA),500)
+onlyRatingDataNoNA[index,] %>%
+  ggpairs( columns=c("imdbVotes","imdbRating","tomatoRating","tomatoReviews","tomatoUserRating","tomatoUserReviews","tomatoMeter","tomatoRotten","tomatoUserMeter","tomatoFresh") ,columnLabels= c("A","B","T1","T2","T3","T4","T5","T6","T7","T8") ) + theme(axis.line=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank()) 
+```
+
+
+To investigate the pairwise relationship between the variables , I used the ggpairs function available in GGally packages. As shown in the figure above , we can see that "imdbVotes"" has a linear relationship with "tomatoReviews" and the correlation between this two varoiables is 0.625. we see imdbVotes increasing with increasing tomatoReviews. Similarly imdbRating has a linear relationship with tomatoRating with a correllation of 0.821 between both variables.imdbRating is also related with tomatoUserRating with a correlation of 0.844.Imdbrating also has linear relationship with tomatoMeter with a correlation of 0.763.Imdbrating also has linear relationship with tomatoUserMeter with a correlation of 0.856.
+tomatoFresh is related to tomatoReviews with a correlation of 0.879 between variables.tomatoUserMetre is related with tomatoUserReview with a correlation of 0.654.tomatoUserMetre related to tomatoUserRating with correllation of 0.912.tomatoUserMetre related to tomatoRating with correllation of 0.725.tomatoRotten is related with tomatoReveiw with correlation 0.724.tomattometter is related to tomatoUserrating with corelation 0.654
+tomattometter is related to tomatorating with corelation 0.948
+tomatoRating is related to tomatoUserRating with correlation 0.713
+imdbVotes is related to tomatoReveiw with correlation 0.625
+
+we can see that the imbdRating has no relationship with imdbVotes , whereas the imdbVotes has a linear relation with one of the tomato rating variables "tomatoReviews" and why the the tomato rating have a pairwise relation between its variables , the two imdb rating variables are not related. Also imdbRating has a linear relationship with several tomato rating variables.
+
+further  to see which variables are most highly correlated with the Gross variables , again I used the ggpairs function. As seen in the graph below imdbVotes,tomatoReviews and tomatoFresh are the variables that are most correlated with the gross revenue .
+
+
+```{r}
+
+onlyRatingData =movie_only_data[, c("Gross","imdbVotes","imdbRating","tomatoRating","tomatoReviews","tomatoUserRating","tomatoUserReviews","tomatoMeter","tomatoRotten","tomatoUserMeter","tomatoFresh")]
+onlyRatingDataNoNA = na.omit(onlyRatingData)
+
+
+index = sample(nrow(onlyRatingDataNoNA),500)
+onlyRatingDataNoNA[index,] %>%
+  mutate(Gross_Billion = Gross/1000000000) %>%
+  ggpairs( columns=c("Gross_Billion","imdbVotes","imdbRating","tomatoRating","tomatoReviews","tomatoUserRating","tomatoUserReviews","tomatoMeter","tomatoRotten","tomatoUserMeter","tomatoFresh"),columnLabels=c("Gross","A","B","T1","T2","T3","T4","T5","T6","T7","T8" ))  + theme(axis.line=element_blank(), axis.text=element_blank(),
+        axis.ticks=element_blank()) 
+```
+
+
+
+7.The variable Awards describes nominations and awards in text format. Convert it to a three dimensional binary vector whose first component represents no nomination or awards, the second component represents some nominations/awards, and the third component represents many nominations or awards. The relationship between the second and the third categories should be close to 5:1 (not precisely - this is a broad guideline to help you avoid creating a third category that is useless due to being extremely small and to encourage consistency). How did you construct your conversion mechanism? How does the gross revenue distribution changes across these three categories.
+```{r}
+
+extract.numbers = function(x,awards){
+   num = str_extract_all(x,"\\(?[0-9]+\\)?")[[1]]
+   num= as.numeric(num)
+   num = (sum(num))
+   if (awards == "no nomination/awards"){
+     return(as.numeric(num == 0))
+   }
+   
+   if (awards == "some nomination/awards"){
+     return(as.numeric(num <= 11))
+   }
+   
+   if (awards == "many nomination/awards"){
+     return(as.numeric(num > 11))
+   }
+   
+}
+
+temp_data1 = movie_only_data
+temp_data1$Awards[temp_data1$Awards == "N/A"] = "0"
+
+ans1 = data.frame(ldply(temp_data1[,"Awards"], extract.numbers, "no nomination/awards"))
+temp_data1$NoNominationORAwards = ans1$V1
+ ans2 = ldply(temp_data1$Awards, extract.numbers, "some nomination/awards")
+ temp_data1$SomeNominationORAwards = ans2$V1
+ ans3 = ldply(temp_data1$Awards, extract.numbers, "many nomination/awards")
+ temp_data1$ManyNominationORAwards = ans3$V1
+
+ test_data = temp_data1[,c("Title","Gross","NoNominationORAwards","SomeNominationORAwards","ManyNominationORAwards")]
+ test_data = subset(test_data, is.na(Gross) == FALSE)
+ test_data = melt(test_data, id=c(1,2))
+ test_data = subset(test_data , value != 0)
+ names(test_data) = c("Title","Gross","Awards", "value")
+ 
+ #plot the boxsplot 
+ggplot(test_data ,aes(reorder(Awards, -Gross, median), Gross)) + geom_boxplot() + coord_flip() + scale_x_discrete("Awards") +ggtitle("Fig 7.1: Awards vs Gross")
+ 
+
+```
+As shown in the code above, I replaced missing values with 0 in the Awards column.Then I created a function called "extract.numbers" , it  extract the digit numbers from a string , convert sum its values. if the sum is 0 , it returns 1 for no nomination, if the sum is greater than 0 but <= 11 it returns 1 for some nominations and if the sum is greater than 11 it returns 1 for  many nominations.
+
+As seen in fig 7.1 , manyNominationORAwards has the highest median gross revenue and NoNominationORAwards has the lowest median gross revenue. We see that the number of awards affect the gross revenue.
+
+
+
+8.Come up with two new insights (backed up by the data and graphs) that are expected, and one new insight (backed up by data and graphs) that is unexpected at first glance and do your best to motivate it. By "new" here I mean insights that are not an immediate consequence of one of the above assignments
+  
+```{r}
+#check the distribution of gross revnue by Country
+temp_data = subset(new_data4, Country != "N/A")
+mydocs = data.frame(temp_data$Country)
+ds = DataframeSource(mydocs)
+rm(mydocs)
+mydocs = VCorpus(ds)
+#convert all words to lower case
+mydocs = tm_map(mydocs, content_transformer(tolower))
+
+toString = content_transformer(function(x, from ,to) gsub(from , to , x))
+mydocs = tm_map(mydocs , toString, "new zealand", "new-zealand")
+mydocs = tm_map(mydocs , toString, "burkina faso", "burkina-faso")
+mydocs = tm_map(mydocs , toString, "united arab emirates", "united-arab-emirates")
+mydocs = tm_map(mydocs , toString, "puerto rico", "puerto-rico")
+mydocs = tm_map(mydocs , toString, "costa rica", "costa-rica")
+mydocs = tm_map(mydocs , toString, "côte d'ivoire", "côte-d'ivoire")
+mydocs = tm_map(mydocs , toString, "dominican republic", "dominican-republic")
+mydocs = tm_map(mydocs , toString, "solomon islands", "solomon-islands")
+mydocs = tm_map(mydocs , toString, "bosnia and herzegovina", "bosnia-and-herzegovina")
+mydocs = tm_map(mydocs , toString, "soviet union", "soviet-union")
+mydocs = tm_map(mydocs , toString, "east germany", "east-germany")
+mydocs = tm_map(mydocs , toString, "federal republic of yugoslavia", "yugoslavia")
+mydocs = tm_map(mydocs , toString, "hong kong", "hong-kong")
+mydocs = tm_map(mydocs , toString, "west germany", "west-germany")
+mydocs = tm_map(mydocs , toString, "the democratic republic of congo", "congo")
+mydocs = tm_map(mydocs , toString, "isle of man", "isle-of-man")
+mydocs = tm_map(mydocs , toString, "uk,", " united-Kingdom")
+mydocs = tm_map(mydocs , toString, "trinidad and tobago", "trinidad-and-tobago")
+mydocs = tm_map(mydocs , toString, "turks and caicos islands", "turks-and-caicos-islands")
+mydocs = tm_map(mydocs , toString, "serbia and montenegro", "serbia-and-montenegro")
+mydocs = tm_map(mydocs , toString, "south africa", "south-africa")
+mydocs = tm_map(mydocs , toString, "saudi arabia", "saudi-arabia")
+mydocs = tm_map(mydocs , toString, "north korea", "north-korea")
+mydocs = tm_map(mydocs , toString, "papua new guinea", "papua-new-guinea")
+mydocs = tm_map(mydocs , toString, "czech republic", "czech-republic")
+mydocs = tm_map(mydocs , toString, "republic of macedonia", "republic-of-macedonia")
+
+
+
+sapply(mydocs[1:3], as.character)
+
+
+# remove number if any
+mydocs = tm_map(mydocs, removeNumbers)
+
+# strip white space
+mydocs = tm_map(mydocs, stripWhitespace)
+
+mydocs = tm_map(mydocs, removePunctuation)
+
+lapply(mydocs[1:3], as.character)
+
+
+# create a term matrix 
+#A document term matrix is simply a matrix with documents as the rows and terms as the columns and a count of the frequency of words as the cells of the matrix
+
+dtm1 <- DocumentTermMatrix(mydocs)
+newcolumns = as.matrix(dtm1)
+temp_data = cbind(temp_data,newcolumns)
+country_ds = data.frame(newcolumns)
+
+sample_data = subset(temp_data, select = c("Title","Gross", names(country_ds)))
+sample_data = melt(sample_data, id=c(1,2))
+
+sample_data = subset(sample_data, is.na(Gross) == FALSE)
+sample_data = subset(sample_data, value != 0)
+names(sample_data) = c("Title", "Gross", "Country", "value")
+freq2 = colSums(as.matrix(dtm1))
+length(freq2)
+ord = order(freq2)
+# least frequenty term/country
+freq2[head(ord)]
+
+#most frequent item
+top.10.countries = freq2[tail(ord,10)]
+
+
+
+sample_data %>%
+  filter(Country %in% names(top.10.countries)) %>%
+  ggplot(aes(x=Country)) + geom_bar(aes(y=(..count..)/sum(..count..))) + scale_y_continuous(labels=percent) + ggtitle("Fig 8.0: distribution of movie title accross top 10 producing country") + theme(axis.text.x=element_text(angle=45,hjust = 1))
+
+# select top 10 countries with highest median revenue
+ds = aggregate(sample_data[,2] , list(sample_data$Country), FUN=median)
+ds = ds[order(-ds$x),]
+Countries.with.high.median.gross =  as.character(ds$Group.1[1:10])
+
+sample_data %>%
+  filter(Country %in% Countries.with.high.median.gross) %>%
+ggplot(aes(reorder(Country, -Gross, median), Gross)) + geom_boxplot() + coord_flip() + scale_x_discrete("Country") + ggtitle("Fig 8.1: Country vs Gross") + theme(axis.text.y=element_text(angle=45,hjust = 1))
+
+
+new_ds = subset(temp_data, is.na(Gross) == FALSE)
+new_ds = subset(temp_data,select=c("Title","Gross", names(countfreq)))
+new_ds = melt(new_ds, id=c(1,2))
+new_ds = subset(new_ds , value != 0)
+names(new_ds) = c("Title","Gross","Genre", "value")
+data.genre.gross = merge(sample_data,new_ds, by=c("Title","Gross"), all = TRUE)
+data.genre.gross = na.omit(data.genre.gross)
+
+index = sample(nrow(data.genre.gross),1000)
+
+data.genre.gross[index,] %>%
+  mutate(Gross_Billion = Gross/1000000000) %>%
+  filter(Country %in% names(top.10.countries)) %>%
+  group_by(Country) %>%
+  ggplot(aes(Country )) + geom_bar() + facet_wrap(~Genre) + theme(axis.text.x=element_text(angle=45,hjust = 1)) + ggtitle("Fig 8.2: Distribution of different Genre by Country")
+
+```
+Further research of the "Country" column reveals that this column represent the country where the movie was produce.I seek to investigate the relationship between the Country where the  movie is produced, Genre and the Gross revenue. Things I expected are : 1) majority of the movies will be produced in developed countries like usa and united kingdom.Hollywood being the largest movie producing industry is located in the usa so I expect most movies to have usa as producing country.
+2) most popular genre for a particular country should be  a high gross revenue generating genre
+
+what I do not expect is : the country where the average highest gross revenue movie are produced are anywhere other than the usa. 
+
+As seen in fig 8.0 , about 65% of the movies have usa as country of production.United kingdom, germany , canada and france  each have less than 10% of movies as the country of production.
+
+As seen in fig 8.1 , movies that has malta as a country of production  has the highest median gross revenue. This is really unexpected result but after a little more research I found out that some very popular high gross revenue movie titles like captain philips, world war z , along with others were produced in malta.This movies were directed by hollywood actors but they were completely shot/produced in malta, thus the reason why a malta has the highest median gross revenue accross different countries.
+
+As seen in fig 8.2 , the popular genre in usa are drama, adventure and action . According to previous graph in fig 3.1 , these are also high revenue genre which confirm what I had expected.
+
+```{r}
+
+ds = subset(movie_only_data,Metascore != "N/A") 
+ ds=  subset(movie_only_data,is.na(Gross) == FALSE) 
+ggpairs(ds, columns=c("Gross","Metascore"))
+```
+
